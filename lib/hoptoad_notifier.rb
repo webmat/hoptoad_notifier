@@ -1,4 +1,6 @@
-require 'net/http'
+require 'hoptoad_notifier/notice'
+require 'hoptoad_notifier/catcher'
+require 'hoptoad_notifier/sender'
 
 # Plugin for applications to automatically post errors to the Hoptoad of their choice.
 module HoptoadNotifier
@@ -66,16 +68,6 @@ module HoptoadNotifier
       URI.parse("#{protocol}://#{host}:#{port}/notices/")
     end
     
-    def default_notice_options #:nodoc:
-      {
-        :api_key       => HoptoadNotifier.api_key,
-        :error_message => 'Notification',
-        :backtrace     => caller,
-        :request       => {},
-        :session       => {},
-        :environment   => ENV.to_hash
-      }
-    end
     
     # You can send an exception manually using this method, even when you are not in a
     # controller. You can pass an exception or a hash that contains the attributes that
@@ -104,158 +96,5 @@ module HoptoadNotifier
     Gem.path.inject(line) do |line, path|
       line.gsub(/#{path}/, "[GEM_ROOT]")
     end
-  end
-
-  # Include this module in Controllers in which you want to be notified of errors.
-  module Catcher
-
-    def self.included(base) #:nodoc:
-      if base.instance_methods.include? 'rescue_action_in_public' and !base.instance_methods.include? 'rescue_action_in_public_without_hoptoad'
-        base.alias_method_chain :rescue_action_in_public, :hoptoad
-      end
-    end
-    
-    # Overrides the rescue_action method in ActionController::Base, but does not inhibit
-    # any custom processing that is defined with Rails 2's exception helpers.
-    def rescue_action_in_public_with_hoptoad exception
-      notify_hoptoad(exception) unless ignore?(exception)
-      rescue_action_in_public_without_hoptoad(exception)
-    end 
-        
-    # This method should be used for sending manual notifications while you are still
-    # inside the controller. Otherwise it works like HoptoadNotifier.notify. 
-    def notify_hoptoad hash_or_exception
-      if public_environment?
-        notice = normalize_notice(hash_or_exception)
-        clean_notice(notice)
-        send_to_hoptoad(:notice => notice)
-      end
-    end
-
-    alias_method :inform_hoptoad, :notify_hoptoad
-
-    # Returns the default logger or a logger that prints to STDOUT. Necessary for manual
-    # notifications outside of controllers.
-    def logger
-      ActiveRecord::Base.logger
-    rescue
-      @logger ||= Logger.new(STDERR)
-    end
-
-    private
-    
-    def public_environment? #nodoc:
-      defined?(RAILS_ENV) and !['development', 'test'].include?(RAILS_ENV)
-    end
-    
-    def ignore?(exception) #:nodoc:
-      ignore_these = HoptoadNotifier.ignore.flatten
-      ignore_these.include?(exception.class) || ignore_these.include?(exception.class.name)
-    end
-
-    def exception_to_data exception #:nodoc:
-      data = {
-        :api_key       => HoptoadNotifier.api_key,
-        :error_class   => exception.class.name,
-        :error_message => "#{exception.class.name}: #{exception.message}",
-        :backtrace     => exception.backtrace,
-        :environment   => ENV.to_hash
-      }
-
-      if self.respond_to? :request
-        data[:request] = {
-          :params      => request.parameters.to_hash,
-          :rails_root  => File.expand_path(RAILS_ROOT),
-          :url         => "#{request.protocol}#{request.host}#{request.request_uri}"
-        }
-        data[:environment].merge!(request.env.to_hash)
-      end
-
-      if self.respond_to? :session
-        data[:session] = {
-          :key         => session.instance_variable_get("@session_id"),
-          :data        => session.instance_variable_get("@data")
-        }
-      end
-
-      data
-    end
-
-    def normalize_notice(notice) #:nodoc:
-      case notice
-      when Hash
-        HoptoadNotifier.default_notice_options.merge(notice)
-      when Exception
-        HoptoadNotifier.default_notice_options.merge(exception_to_data(notice))
-      end
-    end
-
-    def clean_notice(notice) #:nodoc:
-      notice[:backtrace] = clean_hoptoad_backtrace(notice[:backtrace])
-      if notice[:request].is_a?(Hash) && notice[:request][:params].is_a?(Hash)
-        notice[:request][:params] = clean_hoptoad_params(notice[:request][:params])
-      end
-    end
-
-    def send_to_hoptoad data #:nodoc:
-      url = HoptoadNotifier.url
-      Net::HTTP.start(url.host, url.port) do |http|
-        headers = {
-          'Content-type' => 'application/x-yaml',
-          'Accept' => 'text/xml, application/xml'
-        }
-        http.read_timeout = 5 # seconds
-        http.open_timeout = 2 # seconds
-        # http.use_ssl = HoptoadNotifier.secure
-        response = begin
-                     http.post(url.path, stringify_keys(data).to_yaml, headers)
-                   rescue TimeoutError => e
-                     logger.error "Timeout while contacting the Hoptoad server."
-                     nil
-                   end
-        case response
-        when Net::HTTPSuccess then
-          logger.info "Hoptoad Success: #{response.class}"
-        else
-          logger.error "Hoptoad Failure: #{response.class}\n#{response.body if response.respond_to? :body}"
-        end
-      end
-    end
-    
-    def clean_hoptoad_backtrace backtrace #:nodoc:
-      if backtrace.to_a.size == 1
-        backtrace = backtrace.to_a.first.split(/\n\s*/)
-      end
-    
-      backtrace.to_a.map do |line|
-        HoptoadNotifier.backtrace_filters.inject(line) do |line, proc|
-          proc.call(line)
-        end
-      end
-    end
-    
-    def clean_hoptoad_params params #:nodoc:
-      params.each do |k, v|
-        params[k] = "<filtered>" if HoptoadNotifier.params_filters.any? do |filter|
-          k.to_s.match(/#{filter}/)
-        end
-      end
-    end
-    
-    def stringify_keys(hash) #:nodoc:
-      hash.inject({}) do |h, pair|
-        h[pair.first.to_s] = pair.last.is_a?(Hash) ? stringify_keys(pair.last) : pair.last
-        h
-      end
-    end
-
-  end
-
-  # A dummy class for sending notifications manually outside of a controller.
-  class Sender
-    def rescue_action_in_public(exception)
-    end
-
-    include HoptoadNotifier::Catcher
   end
 end

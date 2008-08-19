@@ -305,7 +305,7 @@ class HoptoadNotifierTest < Test::Unit::TestCase
       end
 
       should "make sure the exception is munged into a hash" do
-        options = HoptoadNotifier.default_notice_options.merge({
+        options = HoptoadNotifier::Notice.default_options.merge({
           :backtrace     => @exception.backtrace,
           :environment   => ENV.to_hash,
           :error_class   => @exception.class.name,
@@ -321,7 +321,7 @@ class HoptoadNotifierTest < Test::Unit::TestCase
         @expected_backtrace = ["one big line", "separated", "by new lines", "and some spaces"]
         @exception.set_backtrace [@original_backtrace]
         
-        options = HoptoadNotifier.default_notice_options.merge({
+        options = HoptoadNotifier::Notice.default_options.merge({
           :backtrace     => @expected_backtrace,
           :environment   => ENV.to_hash,
           :error_class   => @exception.class.name,
