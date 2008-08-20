@@ -1,48 +1,4 @@
-require 'test/unit'
-require 'rubygems'
-require 'mocha'
-require 'shoulda'
-require 'action_controller'
-require 'action_controller/test_process'
-require 'active_record'
-require 'net/http'
-require 'net/https'
-require File.join(File.dirname(__FILE__), "..", "lib", "hoptoad_notifier")
-
-RAILS_ROOT = File.join( File.dirname(__FILE__), "rails_root" )
-RAILS_ENV  = "test"
-
-class HoptoadController < ActionController::Base
-  def rescue_action e
-    raise e
-  end
-  
-  def do_raise
-    raise "Hoptoad"
-  end
-  
-  def do_not_raise
-    render :text => "Success"
-  end
-  
-  def do_raise_ignored
-    raise ActiveRecord::RecordNotFound.new("404")
-  end
-  
-  def do_raise_not_ignored
-    raise ActiveRecord::StatementInvalid.new("Statement invalid")
-  end
-  
-  def manual_notify
-    notify_hoptoad(Exception.new)
-    render :text => "Success"
-  end
-  
-  def manual_notify_ignored
-    notify_hoptoad(ActiveRecord::RecordNotFound.new("404"))
-    render :text => "Success"
-  end
-end
+require File.join(File.dirname(__FILE__), 'test_helper')
 
 class HoptoadNotifierTest < Test::Unit::TestCase
   def request(action = nil, method = :get)
@@ -108,8 +64,6 @@ class HoptoadNotifierTest < Test::Unit::TestCase
           end
         end
       end
-      
-      assert_equal %w( 1234 1234 ), @controller.send(:clean_hoptoad_backtrace, %w( foo bar ))
     end
     
     should "add filters to the params filters" do
@@ -119,12 +73,6 @@ class HoptoadNotifierTest < Test::Unit::TestCase
           config.params_filters << "def"
         end
       end
-
-      assert HoptoadNotifier.params_filters.include?( "abc" )
-      assert HoptoadNotifier.params_filters.include?( "def" )
-      
-      assert_equal( {:abc => "<filtered>", :def => "<filtered>", :ghi => "789"},
-                    @controller.send(:clean_hoptoad_params, :abc => "123", :def => "456", :ghi => "789" ) )
     end
     
     should "have at default ignored exceptions" do
@@ -301,35 +249,6 @@ class HoptoadNotifierTest < Test::Unit::TestCase
 
       should "send as if it were a normally caught exception" do
         @sender.expects(:notify_hoptoad).with(@exception)
-        HoptoadNotifier.notify(@exception)
-      end
-
-      should "make sure the exception is munged into a hash" do
-        options = HoptoadNotifier::Notice.default_options.merge({
-          :backtrace     => @exception.backtrace,
-          :environment   => ENV.to_hash,
-          :error_class   => @exception.class.name,
-          :error_message => "#{@exception.class.name}: #{@exception.message}",
-          :api_key       => HoptoadNotifier.api_key,
-        })
-        @sender.expects(:send_to_hoptoad).with(:notice => options)
-        HoptoadNotifier.notify(@exception)
-      end
-      
-      should "parse massive one-line exceptions into multiple lines" do
-        @original_backtrace = "one big line\n   separated\n      by new lines\nand some spaces"
-        @expected_backtrace = ["one big line", "separated", "by new lines", "and some spaces"]
-        @exception.set_backtrace [@original_backtrace]
-        
-        options = HoptoadNotifier::Notice.default_options.merge({
-          :backtrace     => @expected_backtrace,
-          :environment   => ENV.to_hash,
-          :error_class   => @exception.class.name,
-          :error_message => "#{@exception.class.name}: #{@exception.message}",
-          :api_key       => HoptoadNotifier.api_key,
-        })
-        
-        @sender.expects(:send_to_hoptoad).with(:notice => options)
         HoptoadNotifier.notify(@exception)
       end
     end
