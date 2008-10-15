@@ -10,6 +10,7 @@ module HoptoadNotifier
 
     def initialize(notice, controller = nil) #:nodoc:
       self.api_key = HoptoadNotifier.api_key
+      @controller = controller
       case notice
       when Hash
         initialize_from_hash(notice, controller)
@@ -37,8 +38,8 @@ module HoptoadNotifier
       self.error_message = "#{notice.class.name}: #{notice.message}"
       self.backtrace     = notice.backtrace
       self.environment   = ENV.to_hash
-      self.request     = Request.from_controller(controller)
-      self.session     = Session.from_controller(controller)
+      self.request       = Request.from_controller(controller)
+      self.session       = Session.from_controller(controller)
     end
 
     def self.default_options #:nodoc:
@@ -65,19 +66,19 @@ module HoptoadNotifier
     end
 
     def clean_environment #:nodoc:
-      environment.each do |k, v|
-        environment[k] = "<filtered>" if HoptoadNotifier.environment_filters.any? do |filter|
+      self.environment = @controller.send(:filter_parameters, environment) if @controller
+      self.environment.each do |k, v|
+        self.environment[k] = "[FILTERED]" if HoptoadNotifier.environment_filters.any? do |filter|
           k.to_s.match(/#{filter}/)
         end
       end
     end
     
     def clean_params #:nodoc:
-      params = request.params
-      return unless params
-
-      params.dup.each do |k, v|
-        params[k] = "<filtered>" if HoptoadNotifier.params_filters.any? do |filter|
+      return unless request.params
+      request.params = @controller.send(:filter_parameters, request.params) if @controller
+      request.params.each do |k, v|
+        request.params[k] = "[FILTERED]" if HoptoadNotifier.params_filters.any? do |filter|
           k.to_s.match(/#{filter}/)
         end
       end
@@ -112,7 +113,7 @@ module HoptoadNotifier
       def self.from_hash(hash = nil)
         return new if hash.nil?
         new do |r|
-          r.params     = hash[:params]
+          r.params     = hash[:params].dup
           r.rails_root = hash[:rails_root]
           r.url        = hash[:url]
         end
@@ -152,7 +153,7 @@ module HoptoadNotifier
         return new if hash.nil?
         new do |s|
           s.key  = hash[:key]
-          s.data = hash[:data]
+          s.data = hash[:data].dup
         end
       end
 
